@@ -86,6 +86,9 @@ def anchor_targets_bbox(
     batch_size = len(image_group)
 
     regression_batch  = np.zeros((batch_size, anchors.shape[0], 4 + 1), dtype=keras.backend.floatx())
+    # 注意，labels_batch的最后一个维度，前num_classes相当于是one-hot编码，表示该anchor分配到的gt的类别（注意，不包含背景），最后一位则表示正样本。
+    # 最后一位为-1为ignore，0为negative，1为positive。
+    # regression_batch的最后一个维度，表示是正样本还是负样本。
     labels_batch      = np.zeros((batch_size, anchors.shape[0], num_classes + 1), dtype=keras.backend.floatx())
 
     # compute labels and regression targets
@@ -101,6 +104,7 @@ def anchor_targets_bbox(
             regression_batch[index, positive_indices, -1] = 1
 
             # compute target class labels
+            # argmax_overlaps_inds[positive_indices]对应的是第几个gt_box，再送入annotations['labels'][]得到了这个gt_box的类别ID，此即进行了one-hot编码
             labels_batch[index, positive_indices, annotations['labels'][argmax_overlaps_inds[positive_indices]].astype(int)] = 1
 
             regression_batch[index, :, :-1] = bbox_transform(anchors, annotations['bboxes'][argmax_overlaps_inds, :])
@@ -137,10 +141,14 @@ def compute_gt_annotations(
     """
 
     overlaps = compute_overlap(anchors.astype(np.float64), annotations.astype(np.float64))
-    argmax_overlaps_inds = np.argmax(overlaps, axis=1)
+    argmax_overlaps_inds = np.argmax(overlaps, axis=1) # 求得与每一个anchor的交并比最大的gtbox的索引。即每一行对应的最大值的索引号。
     max_overlaps = overlaps[np.arange(overlaps.shape[0]), argmax_overlaps_inds]
 
     # assign "dont care" labels
+    # 这里的规则，positive_indices代表这个anchor的最大IOU大于阈值，取为正样本。如果最大IOU小于最小阈值，则为负样本。否则，忽略。
+    # 最终，positive_indices为正样本的mask，ignore_indices为忽略样本的mask，
+    # argmax_overlaps_inds为与每个anchor具有最大IOU的gtbox的索引，长度为anchor的数量。换句话说，它保存的是每个anchor匹配到第几个gt_box。
+    # 这里和原始的SSD的匹配规则是由区别的。
     positive_indices = max_overlaps >= positive_overlap
     ignore_indices = (max_overlaps > negative_overlap) & ~positive_indices
 
